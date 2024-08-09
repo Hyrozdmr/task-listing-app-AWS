@@ -2,6 +2,9 @@ name: CI/CD
 
 on:
   # Choose your workflow strategy!
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -25,7 +28,7 @@ jobs:
       - name: Set up PostgreSQL
         uses: Harmon758/postgresql-action@v1
         with:
-          postgresql version: '13'
+          postgresql version: '14.2'
           postgresql db: ${{ env.POSTGRES_DB }}
           postgresql user: ${{ env.POSTGRES_USER }}
           postgresql password: ${{ env.POSTGRES_PASSWORD }}
@@ -55,6 +58,7 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v2
+        
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -70,8 +74,8 @@ jobs:
       - name: Build, tag, and push image to Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: PLACEHOLDER-FOR-YOUR-ECR-REPOSITORY
-          IMAGE_TAG: PLACEHOLDER-FOR-YOUR-APP-IMAGE-TAG
+          ECR_REPOSITORY: hyr-fay-ecr-repo
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -80,11 +84,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: push
     env:
-      CONTAINER_REGISTRY_URL: "placeholder-registry-url"
-      CONTAINER_REPOSITORY_NAME: "placeholder-repo-name"
-      S3_DEPLOY_BUCKET: "placeholder-deploy-bucket"
-      ELASTIC_BEANSTALK_APP_NAME: "placeholder-app-name"
-      ELASTIC_BEANSTALK_ENV_NAME: "placeholder-env-name"
+      CONTAINER_REGISTRY_URL: "664047078509.dkr.ecr.eu-west-2.amazonaws.com"
+      CONTAINER_REPOSITORY_NAME: "hyr-fay-ecr-repo"
+      S3_DEPLOY_BUCKET: "hyr-fay-dockerrun-bucket"
+      ELASTIC_BEANSTALK_APP_NAME: "hyr-fay-task-listing-app"
+      ELASTIC_BEANSTALK_ENV_NAME: "hyr-fay-task-listing-app-environment"
 
     steps:
       - name: Checkout code
@@ -101,23 +105,32 @@ jobs:
           CONTAINER_REPOSITORY_NAME: ${{ env.CONTAINER_REPOSITORY_NAME }}
           GITHUB_SHA: ${{ github.sha }}
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-2
+      
       - name: List contents in the aws directory
         run: ls -lah ./aws/
 
       - name: Copy Dockerrun.aws.json to S3
         run: |
           echo "Copying Dockerrun.aws.json to S3"
-          aws s3 cp Dockerrun.aws.json "s3://$S3_DEPLOY_BUCKET"
+          aws s3 cp ./aws/Dockerrun.aws.json s3://hyr-fay-dockerrun-bucket/Dockerrun.aws.json
+
 
       - name: Deploy new application version to Elastic Beanstalk
         run: |
           echo "Deploying new application version"
           aws elasticbeanstalk create-application-version \
             --application-name "$ELASTIC_BEANSTALK_APP_NAME" \
-            --version-label "$GITHUB_SHA" \
+            --version-label "${{ github.sha }}" \
             --source-bundle S3Bucket="$S3_DEPLOY_BUCKET",S3Key="Dockerrun.aws.json" \
             --no-auto-create-application
+
           aws elasticbeanstalk update-environment \
             --application-name "$ELASTIC_BEANSTALK_APP_NAME" \
             --environment-name "$ELASTIC_BEANSTALK_ENV_NAME" \
-            --version-label "$GITHUB_SHA"
+            --version-label "${{ github.sha }}" 
